@@ -1,0 +1,713 @@
+<?php
+/*
+Plugin Name: TaiGel's 1st Plugin
+Plugin URI: 
+Description: Frontend for ikea2go.ru
+Author: Sergey "TaiGel" Podosinnikov
+Author URI: 
+Version: 0.1
+*/ 
+function get_form(){
+ob_start();
+?>
+	<script>
+	jQuery(document).ready(function($){
+		if (localStorage["prods"]) {
+			c=JSON.parse(localStorage["prods"])
+			$.each(c, function(index, value) {
+				ajaxprod(index,value,true)
+			}); 
+		}
+		if (localStorage["step"]) {
+			var tab='';
+			switch (localStorage["step"]) {
+				case '2':
+					tab='adress';
+					step=2;
+					break
+				case '3':
+					tab='summary';
+					step=3;
+					break
+				case '4':
+					tab='pay';
+					step=4;
+					break
+			}
+			$('ul.nav-tabs a[href=#'+tab+']').tab('show');
+			google.maps.event.trigger(map , 'resize');
+		}
+		if (localStorage["paymet"]){
+			$('.paymethod').each(function () {
+				if ($(this).val() == localStorage["paymet"]) {
+					$(this).prop('checked', true);
+				}
+			})
+		}
+		function refmap() {
+			var input = document.getElementById('pac-input');
+			google.maps.event.trigger( input, 'focus')
+			google.maps.event.trigger( input, 'keydown', {keyCode:13})
+		}
+		if (localStorage["addr"]) {
+			jQuery('#pac-input').val(localStorage["addr"]);
+			jQuery('#addrsum').html(localStorage["addr"]);
+			setTimeout(refmap,500)
+		}
+		if (localStorage["fio"]) {jQuery('#fio').val(localStorage["fio"]);}
+		if (localStorage["totPrice"]) {jQuery('.summary-top').html(localStorage["totCount"]+' товаров на общую сумму '+localStorage["totPrice"]+' руб.');}
+		if (localStorage["email"]) {jQuery('#email').val(localStorage["email"]);}
+		if (localStorage["tel"]) {jQuery('#tel').val(localStorage["tel"]);}
+		var nums=1;
+		var prods= {};
+		function ajaxprod(xcode,count,load) {
+			count = typeof count !== 'undefined' ? count : 1;
+			load = typeof load !== 'undefined' ? load : false;
+			jQuery.post(
+				myajax.url,
+				{
+				action : 'get_product_json',
+				nonce : myajax.nonce,
+				code : xcode
+				},
+				function( response ) {
+					obj = JSON.parse(response);
+					pack = JSON.parse(obj['Таблица упаковок'])
+					console.log($("#"+obj.code+".prod"))
+					if ($("#"+obj.code+".prod").length > 0){
+						var n = $("#"+obj.code+".prod .numb")
+						var s = $("#"+obj.code+".prod .sum")
+						n.val(Number(n.val())+1);
+						s.html(Number(parseFloat(obj.price.replace(/[^0-9]/g, "")))*Number(n.val())+' руб.')
+						if (!load)GetProducts()
+						calcWeight()
+					} else {
+						if (obj.name == 'не найдено'){
+							$('#code').val(obj.name);
+						} else {
+							if (pack[0].length>0 && pack[0].width>0 && pack[0].height>0){
+								vol=pack[0].length*pack[0].width*pack[0].height;
+							} else {
+								vol="none";
+							}
+							var warn='';
+							if (vol=="none"){
+								warn='<span title="По данному товару нет информации о габаритах или весе. Стоимость доставки будет считаться без него." class="glyphicon glyphicon-warning-sign" style="position: absolute;color: red;"></span>';
+							}
+							$('#cartcont').append(
+								'<div class="prod" id="'+obj.code+'" weight="'+pack[0].weight+'" vol="'+vol+'" price="'+parseFloat(obj.price.replace(/[^0-9]/g, ""))+'" style="position:relative;">'+warn+
+									'<ul class="list-inline">'+
+										'<li><img style="border: 6px solid #EFC700;" class="img-item" src="http://www.ikea.com/'+obj.image+'" /></li>'+
+										'<li>'+
+											'<span class="cart-item">'+obj.name+'</span>'+
+											'<br />'+
+											'<span class="code-item">Код: '+obj.code+'</span>'+
+										'</li>'+
+										'<li><input type="number" class="numb form-control" value="'+count+'"></li>'+
+										'<li>'+parseFloat(obj.price.replace(/[^0-9]/g, ""))+' руб.</li>'+
+										'<li><span class="sum">'+parseFloat(obj.price.replace(/[^0-9]/g, ""))+' руб.</span></li>'+
+										'<li><span class="del" c="'+obj.code+'" style="cursor:pointer;">X</span></li>'+
+									'</ul>'+
+								'</div>'
+							)
+							$('#cartsum').append(
+								'<div class="prodsum" id="'+obj.code+'" weight="'+pack[0].weight+'" style="position:relative;">'+warn+
+									'<ul class="list-inline">'+
+										'<li><span>'+nums+'.</span></li>'+
+										'<li><img style="border: 6px solid #EFC700;" class="img-item" src="http://www.ikea.com/'+obj.image+'" /></li>'+
+										'<li>'+
+											'<span class="cart-item">'+obj.name+'</span>'+
+											'<br />'+
+											'<span class="code-item">Код: '+obj.code+'</span>'+
+										'</li>'+
+										'<li><span class="numb"></span></li>'+
+										'<li><span class="sum">'+parseFloat(obj.price.replace(/[^0-9]/g, ""))*count+' руб.</span></li>'+
+									'</ul>'+
+								'</div>'
+							)
+							nums++
+							if (!load)GetProducts()
+							refcart()
+							calcWeight()
+						}
+					}
+				}
+			);
+		}
+		function supports_html5_storage() {
+			try {
+				return 'localStorage' in window && window['localStorage'] !== null;
+			} catch (e) {
+				return false;
+			}
+		}
+		function calcWeight() {
+			var totWeight=0;
+			var totVol =0;
+			var totPrice =0;
+			var totCount =0;
+			$('#cartcont').children('.prod').each(function () {
+				var t=$(this);
+				id=t.attr('id')
+				weight=t.attr('weight')
+				vol=t.attr('vol')
+				price=t.attr('price')
+				if (vol == 'none'){
+					vol=0
+				}
+				count=$('#'+id+' .numb').val();
+				totWeight+=Number(weight)*Number(count)
+				totCount+=Number(count)
+				totVol+=Number(vol)*Number(count)
+				totPrice+=Number(price)*Number(count)
+				localStorage["totPrice"] = totPrice;
+				localStorage["totCount"] = totCount;
+				console.log(totPrice)
+			})
+			
+			$('#sumweight').html(String(totWeight/1000)+' кг.');
+			$('#sumvol').html(String(Math.round((totVol/1000000000)*100)/100)+' м<sup><small>3</small></sup>.');
+			localStorage["sumWeight"] = totWeight/1000;
+			localStorage["sumVolume"] = Math.round((totVol/1000000000)*100)/100;
+		}
+		function GetProducts() {
+			if (supports_html5_storage()){
+				var products = {};
+				jQuery('#cartcont').children('.prod').each(function () {
+					id=$(this).attr('id')
+					products[id]=$('#'+id+' .numb').val();
+				})
+				//console.log(products)
+				localStorage["prods"] = JSON.stringify(products);
+				var c=localStorage["prods"]
+				calcWeight()
+			}
+			console.log(jQuery('#cartcont').children('.prod'))
+			if (jQuery('#cartcont').children('.prod').length){
+				$('#cart').show()
+			}	else {
+				$('#cart').hide()
+			}
+			
+		}
+		function refcart() {
+			console.log(jQuery('#cartcont').children('.prod'))
+			if (jQuery('#cartcont').children('.prod').length){
+				$('#cart').show()
+			}	else {
+				$('#cart').hide()
+			}
+		}
+		$('.nav-tabs a').click(function (e) {
+			e.preventDefault()
+			$(this).tab('show')
+			switch ($(this).attr('href')) {
+				case '#products':
+					step=1;
+					break
+				case '#adress':
+					step=2;
+					break
+				case '#summary':
+					step=3;
+					break
+				case '#pay':
+					step=4;
+					break
+			}
+			localStorage['step']= step
+			google.maps.event.trigger(map , 'resize');
+		})
+		$('.numb').live('change',function () {
+			var p=$(this).parent().next()
+			var s=$(this).parent().next().next().children()
+			s.html(parseFloat(p.html().replace(/[^0-9]/g, ""))*Number($(this).val())+' руб.')
+			GetProducts()
+		})
+		$('.del').live('click',function () {
+			$('#'+$(this).attr('c')).empty().remove();
+			GetProducts();
+		})
+		$('#add_product').click(function () {
+			var code = $('#code').val();
+			var re= /^[0-9]{8}/
+			var res= /^S[0-9]{8}/
+			//console.log(res.test(code));
+			if (re.test(code) || res.test(code)) {
+				ajaxprod(code)
+			} else {
+				var ncode = code.split('/')[code.split('/').length-2]
+				if (re.test(ncode) || res.test(ncode)) {
+					ajaxprod(ncode)
+				} else {
+					ncode = code.split('/')[code.split('/').length-1]
+					if (re.test(ncode) || res.test(ncode)) {
+						ajaxprod(ncode)
+					} else {
+						var tcode = code.replace(/\./g, "")
+						if (re.test(tcode) || res.test(tcode)) {
+							ajaxprod(tcode)
+						}
+					}
+				}
+			}
+		});
+		$('#pac-input').change(function () {
+			$('#addrsum').html($(this).val());
+			localStorage["addr"] = $(this).val();
+		})
+		$('#fio').change(function () {localStorage["fio"] = $(this).val();})
+		$('#email').change(function () {localStorage["email"] = $(this).val();})
+		$('#tel').change(function () {localStorage["tel"] = $(this).val();})
+		$('.next').click(function (){
+			var tab='';
+			switch ($(this).parents('.tab-pane').attr('id')) {
+				case 'products':
+					tab='adress';
+					step=2;
+					break
+				case 'adress':
+					tab='summary';
+					step=3;
+					break
+				case 'summary':
+					tab='pay';
+					step=4;
+					break
+			}
+			localStorage['step']= step
+			$('ul.nav-tabs a[href=#'+tab+']').tab('show');
+			google.maps.event.trigger(map , 'resize');
+		} )
+		$('.paymethod').click(function () {
+			$('.paymethod').prop('checked', false);
+			$(this).prop('checked', true);
+			localStorage["paymet"] = $(this).val()
+		})
+		$('.pay').click(function () {
+			$.ajax({
+				type: "POST",
+				url: taiajax.url,
+				data: {
+					action : 'tai_send_email',
+					tai_nonce : taiajax.tai_nonce,
+					products: localStorage["prods"],
+					addr: localStorage["addr"],
+					fio: localStorage["fio"],
+					email:localStorage["email"],
+					tel:localStorage["tel"],
+					paymeth:localStorage["paymet"],
+					sumWeight:localStorage["sumWeight"],
+					sumVolume:localStorage["sumVolume"]
+				}
+			})
+			.done(function( msg ) {
+				console.log(msg)
+			});
+		})
+		$('.interactive').click(function(e) {
+			//return false;
+			e.preventDefault();
+			$('#code').val($(this).html())
+		})
+	});
+	</script>
+	<ul class="row nav nav-tabs">
+      <li class="col-md-3 active tabspad tabname tab-search" style="margin-left: -1px;"><div class="number" style="margin-left: -1px;">1</div><a class="search-icon" href="#products" data-toggle="tab">Товары</a></li>
+		<li class="col-md-3 tabspad tabname" style="margin-right: -4px; margin-left: -3px;"><div class="number" style="margin-left: -1px;">2</div><a class="adress-icon" href="#adress" data-toggle="tab">Адрес доставки</a></li>
+		<li class="col-md-3 tabspad tabname tab-summary"><div class="number">3</div><a class="summary-icon" href="#summary" data-toggle="tab">Итоговая сумма</a></li>
+		<li class="col-md-3 tabspad-last tabname" style="margin-left: -3px;"><div style="margin-left: -1px;" class="number">4</div><a class="pay-icon" href="#pay" data-toggle="tab">Оплата</a></li>
+	</ul>
+	<div class="tab-content">
+		<div class="tab-pane active" id="products"><p>
+			<div class="row">
+				<div class="col-xs-12">
+					<div class="form-group">
+						<div class="row">
+							<div class="col-xs-11">
+								<input type="text" class="form-control" placeholder="Введите ссылку на товар или его артикул" id="code" value="30193375">
+							</div>
+							<div class="col-xs-1">
+                              <button type="button" class="btn" id="add_product"><img src="/wp-content/uploads/2014/03/basket.png" alt=""></button>
+							</div>
+						</div>
+					</div>
+					<div class="row primer"><div class="col-xs-12">
+					<span>Например: <a class="interactive" href="http://www.ikea.com/ru/ru/catalog/products/60268208/">http://www.ikea.com/ru/ru/catalog/products/60176039/</a>  или  <a class="interactive" href="http://www.ikea.com/ru/ru/catalog/products/60268208/">601.760.39</a></span>
+					</div></div>
+                 
+					<div id="cart" style="display: none;">
+						<div class="col-xs-12 cart-desc" id="bef_cart">
+							<div class="title-cart">КОРЗИНА</div>
+							<div class="title-cart-desc">Проверьте правильность списка покупок, при необходимости отредактируйте его</div>
+						</div>
+						<div class="col-xs-12"><hr class="razdelitel"></div>
+						<div class="col-xs-12" id="cartcont"></div>
+						<div class="col-xs-12"><hr class="razdelitel"></div>
+						<div>&nbsp;</div>
+						<div class="next btn btn-default" >Далее &rarr;</div>
+					</div>
+					
+				</div>
+			</div>
+		</div>
+		<div class="tab-pane" id="adress">
+			<div class="row">
+				<div class="col-xs-12"><p>
+					<div class="row">                      
+                  		<div class="col-xs-12 map-desc">Введите адрес доставки, чтобы мы могли просчитать полную стоимость заказа</div>
+						<div class="col-xs-12">
+                          <input type="text" name="adress" id="pac-input" placeholder="Адрес" class="form-control" />
+						</div>
+					</div><p>
+					<div class="row">
+						<div class="col-xs-4">
+							<input type="text" name="fio" id="fio" placeholder="ФИО получателя" class="form-control" />
+						</div>
+						<div class="col-xs-4">
+							<input type="text" name="email" id="email" placeholder="E-mail" class="form-control" />
+						</div>
+						<div class="col-xs-4">	
+							<input type="text" name="tel" id="tel" placeholder="Телефон" class="form-control" />
+						</div>
+					</div><p>
+					<div class="row">
+						<div class="col-xs-4">
+							<select name="shipment_exp" id="shipment_exp"class="form-control">
+								<option>До двери</option>
+								<option>До склада</option>
+								<option>1</option>
+								<option>1</option>
+							</select>
+							
+						</div>
+					</div><p>
+					<div style="height:245px;padding-left: 47px;padding-right: 49px;">
+					<div id="map-canvas" style="height:100%;" class="mapframe"></div>
+					</div><p>
+					<script type="text/javascript">
+						var latlng = new google.maps.LatLng(55.751666,35.217777);
+						var options = {
+						   zoom: 8,
+						   center: latlng,
+						   mapTypeId: google.maps.MapTypeId.ROADMAP
+						};
+						map = new google.maps.Map(document.getElementById("map-canvas"), options);
+						// Create the search box and link it to the UI element.
+						var input = (document.getElementById('pac-input'));
+						//map.controls[google.maps.ControlPosition.TOP_LEFT].push(input);
+						var searchBox = new google.maps.places.SearchBox((input));
+						// [START region_getplaces]
+						// Listen for the event fired when the user selects an item from the
+						// pick list. Retrieve the matching places for that item.
+						google.maps.event.addListener(searchBox, 'places_changed', function() {
+							var places = searchBox.getPlaces();
+							markers = [];
+							for (var i = 0, marker; marker = markers[i]; i++) {
+								marker.setMap(null);
+							}
+							// For each place, get the icon, place name, and location.
+							markers = [];
+							var bounds = new google.maps.LatLngBounds();
+							for (var i = 0, place; place = places[i]; i++) {
+								var image = {
+									url: place.icon,
+									size: new google.maps.Size(71, 71),
+									origin: new google.maps.Point(0, 0),
+									anchor: new google.maps.Point(17, 34),
+									scaledSize: new google.maps.Size(25, 25)
+								};
+								// Create a marker for each place.
+								var marker = new google.maps.Marker({
+									map: map,
+									icon: image,
+									title: place.name,
+									position: place.geometry.location
+								});
+								markers.push(marker);
+								bounds.extend(place.geometry.location);
+							}
+							map.fitBounds(bounds);
+						});
+					</script>
+                  	<hr class="razdelitel">
+					<div class="next btn btn-default">Далее &rarr;</div>
+				</div>
+			</div>
+		</div>
+		<div class="tab-pane" id="summary">
+			<div class="row">
+				<div class="col-xs-12">
+					<div class="summary-desc">Проверьте еще раз данные Вашего заказа и при необходимости отредактируйте его</div>
+					<hr class="razdelitel">
+                  	<div class="row">
+						<div id="cartsum" class="col-xs-12"></div>
+					</div>
+					<div class="row">
+						<div id="addrsum" class="col-xs-12"></div>
+					</div>
+					<div class="row">
+						<div class="col-xs-10 sumweight-desc">Общий вес</div>
+						<div id="sumweight" class="col-xs-2"></div>
+					</div>
+					<div class="row">
+						<div class="col-xs-10 sumweight-desc">Общий объем</div>
+						<div id="sumvol" class="col-xs-2"></div>
+					</div>
+                  	<hr class="razdelitel">
+					<div class="row">
+						<div class="col-xs-12">
+							<div class="next btn btn-default">Далее &rarr;</div>
+						</div>
+					</div>
+				</div>
+			</div>	
+		</div>
+		<div class="tab-pane" id="pay">
+          	<div class="pay-desc">Выберите способ оплаты и нажмите оплатить</div>
+			<hr class="razdelitel">
+          <div class="platej">
+			<div><img class="pay-sistem-icon" style="margin-top: 5px;" src="/wp-content/uploads/2014/03/pay-system-yandex-money.png" alt="Яндекс Деньги" /><input class="paymethod" type="checkbox" value="1" />Яндекс Деньги</div>
+			<div><img class="pay-sistem-icon" style="margin-top: 5px;"  src="/wp-content/uploads/2014/03/pay-system-visa-mc.png" alt="Карта VISA/MASTERCARD" /><input class="paymethod" type="checkbox" value="2" />Карта VISA/MASTERCARD</div>
+			<div><img class="pay-sistem-icon" style="margin-top: 5px;"  src="/wp-content/uploads/2014/03/pay-system-qiwi.png" alt="QIWI" /><input class="paymethod" type="checkbox" value="3" />QIWI</div>
+			<div><img class="pay-sistem-icon" style="margin-top: 5px;"  src="/wp-content/uploads/2014/03/pay-system-webmoney.png" alt="Webmoney" /><input class="paymethod" type="checkbox" value="4" />Webmoney</div>
+          </div>
+			<hr class="razdelitel">
+          	<div class="pay btn btn-default">Оплатить</div>
+		</div>
+	</div>
+	
+<?php
+$html = ob_get_contents();
+ob_end_clean();
+return $html;
+}
+add_action('wp_print_styles', 'add_my_stylesheet');
+function add_my_stylesheet() {
+	$myStyleUrl = WP_PLUGIN_URL . '/taigel-plugin/js/spinner/dist/bootstrap-spinner.css';
+	$myStyleFile = WP_PLUGIN_DIR . '/taigel-plugin/js/spinner/dist/bootstrap-spinner.css';
+	if ( file_exists($myStyleFile) ) {
+		wp_register_style('spinner', $myStyleUrl);
+		wp_enqueue_style( 'spinner');
+	}
+}
+function tai_send_email() {
+	$nonce = ! isset( $_POST['tai_nonce'] ) ? $_GET['tai_nonce'] : $_POST['tai_nonce'];
+	if ( !wp_verify_nonce( $nonce, "tai_plugin" ) )
+		die ( 'Stop! ');
+	// $body="
+	// {$_POST['products']}
+	// {$_POST['addr']}
+	// {$_POST['fio']}
+	// {$_POST['email']}
+	// {$_POST['tel']}
+	// {$_POST['paymeth']}";
+	
+	$body = "Заявка от ".$_POST['fio']."<br />";
+	$body .= "E-mail: ".$_POST['email']."<br />";
+	$body .= "Телефон: ".$_POST['tel']."<br />";
+	$body .= "Адрес: ".$_POST['addr']."<br />";
+	switch ($_POST['paymeth']) {
+		case 1 : $paymeth="Яндекс Деньги"; break;
+		case 2 : $paymeth="Карта VISA/MASTERCARD"; break;
+		case 3 : $paymeth="QIWI"; break;
+		case 4 : $paymeth="Webmoney"; break;
+	}
+	$body .= "Способ оплаты: ".$paymeth."<br /><br />";
+	$body .= "Товары:<br />";
+	$prods = json_decode(stripslashes($_POST['products']),true);
+	$sum=0;
+	foreach ($prods as $key=>$val){	
+		$body .= $val." x ";
+		$prod = json_decode(get_product_json($key,wp_create_nonce("ikea"),true),true);
+		$body .= '<a href="'.$prod['url'].'">'.$prod['name']."</a> = ";
+		$sum+= (int)preg_replace('/\D/','',$prod['price'])*$val;
+		$body .= (int)preg_replace('/\D/','',$prod['price'])*$val."руб.<br />";
+	}
+	$body .= "<br />Итого: $sum руб.";
+	$body .= "<br />Общий вес: ".$_POST['sumWeight']." кг.";
+	$body .= "<br />Общий объем: ".$_POST['sumVolume']." м<sup><small>3</small></sup>.";
+	$headers  = 'MIME-Version: 1.0' . "\r\n";
+	$headers .= 'Content-type: text/html; charset=UTF-8' . "\r\n";
+	$headers .= 'To: Admin <'.get_option('admin_email').'>' . "\r\n";
+	$headers .= 'From: ikea2go.ru' . "\r\n";
+	wp_mail( get_option('admin_email'), 'Заявка', $body,$headers );
+	die();
+}
+function tai_enqueue()
+{
+    // wp_enqueue_script( 'tai_script' );
+	wp_localize_script( 'jquery', 'taiajax', 
+		array(
+		   'url' => admin_url('admin-ajax.php'),
+		   'tai_nonce' => wp_create_nonce("tai_plugin")
+		)
+	);
+}
+add_action( 'wp_enqueue_scripts', 'tai_enqueue' );
+add_action( 'wp_ajax_tai_send_email', 'tai_send_email');
+add_action( 'wp_ajax_nopriv_tai_send_email', 'tai_send_email' );
+wp_register_style('spinner', 'http://netdna.bootstrapcdn.com/font-awesome/3.2.1/css/font-awesome.min.css');
+wp_enqueue_style( 'spinner');
+
+//wp_register_script('spinner_script', WP_PLUGIN_URL . '/taigel-plugin/spinner/dist/jquery.spinner.min.js');
+wp_enqueue_script('spinner_script',WP_PLUGIN_URL . '/taigel-plugin/js/spinner/dist/jquery.spinner.min.js',array('jquery'));
+wp_register_script('google_maps_api_script', 'https://maps.googleapis.com/maps/api/js?key=AIzaSyAdsRNvsJaUpPbX0GUsopSZ2KahJbl8GdM&sensor=false&language=ru&libraries=places');
+//wp_register_script('google_maps_api_lib', 'http://maps.googleapis.com/maps/api/js?libraries=places&sensor=false');
+wp_enqueue_script('google_maps_api_script');
+//wp_enqueue_script('google_maps_api_lib');
+add_shortcode('form', 'get_form');
+
+
+
+/*
+Plugin Name: Яндекс.Деньги - Форма оплаты
+Plugin URI: https://github.com/casepress-studio/yandex-money-wordpress-shortcode
+Version: 1.0.1
+Author: CasePress Studio
+Author URI: http://casepress.org
+Description: Добавляет шорткод, для создания формы оплаты через систему Яндекс.Деньги. Шорткод вида [yandex_money_payment_form scid=xxx shop_id=xxx]
+*/
+
+
+function yandex_money_payment_form( $atts ) {
+	
+      $scid = 7036; //ИД Яндекс.Кассы
+      $shop_id = 15287; //ИД магазина для Яндекс.Кассы
+      $customer_number = ''; //Номер заказа или клиента
+      $Sum = ''; //Сумма оплаты
+      $CustName = ''; //Наименование клиента
+      $CustAddr = ''; //Адрес доставки
+      $CustEMail = ''; // Электропочта
+      $OrderDetails = ''; //Комментарий или описание заказа
+      $PaymentType = 'YM'; //Тип оплаты
+      $cn_input = false; //Нужно ли выводить поле номера заказа/клиента
+      $ca_input = false; //Нужно ли выводить поле деталей заказа
+	
+  
+  
+	if ( empty($scid) || empty($shop_id) ) return 'Нужно указать в шорткоде параметры scid & shop_id';
+
+	if ( empty($CustomerNumber) )
+		if ( isset($_GET['customer_number']) ) 	$customer_number = $_GET['customer_number'];
+
+	if ( empty($Sum) )
+		if ( !empty($_GET['Sum']) )	$Sum = $_GET['Sum'];
+
+	if ( empty($CustName) )
+		if ( !empty($_GET['CustName']) ) $CustName = $_GET['CustName'];
+
+	if ( empty($CustAddr) )
+		if ( !empty($_GET['CustAddr']) ) $CustAddr = $_GET['CustAddr'];
+
+	if ( empty($CustEMail) )
+		if ( !empty($_GET['CustEMail']) ) $CustEMail = $_GET['CustEMail'];
+
+	if ( empty($OrderDetails) )
+		if ( !empty($_GET['OrderDetails']) ) $OrderDetails = $_GET['OrderDetails'];
+
+	if ( !empty($_GET['PaymentType']) ) $PaymentType = $_GET['PaymentType'];
+
+    ob_start();
+	?>
+	<div class="form-pay-ya-money">
+    	<form role="form" name="ShopForm" method="POST" action="https://money.yandex.ru/eshop.xml">
+          	<fieldset>
+              <legend>Обязательные данные</legend>
+              <div class="sum_div">
+                <label for="form-order-sum">Сумма</label>
+                <small>(в рублях)</small>
+                <input id="form-order-sum" class="form-control" type="text" name="Sum" value="<?php echo $Sum; ?>">  
+              </div>
+              <div class="cp-form-order-email">
+              	<label for="form-order-email">Электронная почта</label>
+              	<input id="form-order-email" class="form-control" type="email" name="CustEMail" value="<?php echo $CustEMail; ?>" placeholder="example@mail.to">
+              </div>
+          	</fieldset>
+          	<hr>
+          	<fieldset>
+              <legend>Дополнительные данные</legend>  
+              <div class="cp-form-order-name">
+                <label for="form-order-name">Имя</label> 
+                <small>(Ф.И.О. или название организации)</small>
+              	<input id="form-order-name" class="form-control" type="text" name="CustName" value="<?php echo $CustName; ?>">
+              </div>
+              <?php if($cn_input): ?>
+                <div class="order_number">
+                    <label for="form-order-id">Номер заказа</label>
+                    <small>(Если есть, может быть номер клиента, счета, заказа)</small>
+                    <input id="form-order-id" class="form-control" name="CustomerNumber" type="text" value="<?php echo $customer_number; ?>">
+                </div>
+              <?php endif;?>
+              <?php if($ca_input): ?>
+                <div class="cp-form-order-address">
+                  <label for="form-order-address">Адрес</label> 
+                  <small>(Город, улица, дом для доставки или место жительства плательщица)</small>
+                  <input id="form-order-address" class="form-control" type="text" name="CustAddr" value="<?php echo $CustAddr; ?>">
+                </div>
+              <?php endif;?>
+              <div class="cp-form-order-description">
+                <label for="form-order-description">Комментарий к оплате</label>
+                <textarea id="form-order-description" class="form-control" rows="5" name="OrderDetails"><?php echo $OrderDetails; ?></textarea>
+              </div>
+          	</fieldset>
+          	<hr>
+          	<fieldset>
+              <legend>Способы оплаты</legend>
+              <div class="cp-form-order-ym">
+              	<label for="form-order-ym">
+                  <input id="form-order-ym" name="PaymentType" <?php if ($PaymentType == "YM"){echo'checked="checked"';} ?> value="" type="radio"> Со счета в Яндекс.Деньгах
+                </label>
+              </div>
+              <div class="cp-form-order-ac">
+              	<label for="form-order-ac">
+                  <input id="form-order-ac" name="PaymentType" <?php if ($PaymentType == "AC"){echo'checked="checked"';} ?> value="AC" type="radio"> С банковской карты
+                </label>
+              </div>
+              <div class="cp-form-order-gp">
+              	<label for="form-order-gp">
+                  <input id="form-order-gp" name="PaymentType" <?php if ($PaymentType == "GP"){echo'checked="checked"';} ?> value="GP" type="radio"> По коду через терминал
+                </label>
+              </div>
+              <div class="cp-form-order-wm">
+              	<label for="form-order-wm">
+                  <input id="form-order-wm" name="PaymentType" <?php if ($PaymentType == "WM"){echo'checked="checked"';} ?> value="WM" type="radio"> Сo счета WebMoney
+                </label>
+              </div>
+          	</fieldset>
+          	<input class="btn" type=submit value="Оплатить">
+          	<input type="hidden" name="scid" value="<?php echo $scid; ?>">
+          	<input type="hidden" name="ShopID" value="<?php echo $shop_id; ?>"> 
+		</form>
+	</div>
+	
+	
+	<?php
+  	$data = ob_get_contents();
+    ob_end_clean();
+    return $data;
+
+}
+
+
+add_action('wp_head', 'add_cp_yamoney_form_style');
+ 
+function add_cp_yamoney_form_style() { 
+global $post;
+  if(isset($post->post_content) AND has_shortcode( $post->post_content, 'yandex_money_payment_form')){
+	?>
+	<style type="text/css" id="yandex_money_payment_form_style">
+      .form-pay-ya-money {
+      	!border-width: 1px;
+		!border-color: black;
+      }
+      .form-pay-ya-money input[type="text"] {
+        !width: 100%;
+      }
+      .form-pay-ya-money textarea {
+        !width: 100%;
+      }
+      
+	</style>
+
+?>
